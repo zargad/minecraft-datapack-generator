@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::io::Result;
-
+use std::boxed::Box;
 
 pub trait Entry {
     fn create(&self, path: &Path) -> Result<()>;
@@ -21,9 +21,9 @@ impl<T: File> Entry for T {
     }
 }
 
-pub type Directory<'a> = HashMap<OsString, &'a dyn Entry>;
+pub type Directory<'a> = HashMap<OsString, Box<dyn Entry + 'a>>;
 
-impl Entry for Directory<'_> {
+impl<'a> Entry for Directory<'a> {
     fn create(&self, path: &Path) -> Result<()> {
         create_dir(path)?;
         for (name, entry) in self {
@@ -37,46 +37,97 @@ impl Entry for Directory<'_> {
 mod tests {
     pub use super::*;
 
-    
-
     use tempdir::TempDir;
-
-    #[test]
-    fn directory_create() {
-        const entry_name: &str = "test_directory";
-
-        let temp_dir = TempDir::new(module_path!()).expect("couldn't create temp dir");
-
-        let path = temp_dir.path().join(entry_name);
-        assert!(!path.exists(), "test is invalid, '{entry_name}' already exists");
-
-        let entry = Directory::new();
-        entry.create(&path).unwrap_or_else(|_| panic!("couldn't create '{entry_name}'"));
-        assert!(path.exists(), "didn't create '{entry_name}'");
-
-        temp_dir.close().expect("couldn't close temp dir");
-    }
 
     type StringFile = String;
     impl File for StringFile {}
+
+    type CharFile = char;
+    impl File for CharFile {}
+
     #[test]
     fn file_create() {
-        const entry_name: &str = "test_file";
+        const ENTRY_NAME: &str = "test_file";
 
-        let temp_dir = TempDir::new(module_path!()).expect("Should have been able to create temp dir");
+        let temp_dir = TempDir::new(module_path!()).expect("should have created temp dir");
 
-        let path = temp_dir.path().join(entry_name);
-        assert!(!path.exists(), "'{entry_name}' exist before test ran");
+        let path = temp_dir.path().join(ENTRY_NAME);
+        assert!(!path.exists(), "'{ENTRY_NAME}' exist before test ran");
 
-        const file_contents: &str = "Hello World!";
-        let entry = StringFile::from(file_contents);
-        entry.create(&path).unwrap_or_else(|_| panic!("Should have created '{entry_name}'"));
-        assert!(path.exists(), "'{entry_name}' does not exists");
+        const FILE_CONTENTS: &str = "Hello World!";
+        let entry = StringFile::from(FILE_CONTENTS);
+        entry.create(&path).unwrap_or_else(|_| panic!("should have created '{ENTRY_NAME}'"));
+        assert!(path.exists(), "'{ENTRY_NAME}' does not exists");
 
         let read_file_contents = fs::read_to_string(path)
-            .expect("Should have been able to read the file");
-        assert_eq!(read_file_contents, file_contents, "'{entry_name}' does not contain the correct contents");
+            .expect("should have been able to read the file");
+        assert_eq!(read_file_contents, FILE_CONTENTS, "'{ENTRY_NAME}' does not contain the correct contents");
 
-        temp_dir.close().expect("couldn't close temp dir");
+        temp_dir.close().expect("should have closed temp dir");
+    }
+
+    #[test]
+    fn directory_create() {
+        const ENTRY_NAME: &str = "test_directory";
+
+        let temp_dir = TempDir::new(module_path!()).expect("couldn't create temp dir");
+
+        let path = temp_dir.path().join(ENTRY_NAME);
+        assert!(!path.exists(), "test is invalid, '{ENTRY_NAME}' already exists");
+
+        let entry = Directory::new();
+        entry.create(&path).unwrap_or_else(|_| panic!("couldn't create '{ENTRY_NAME}'"));
+        assert!(path.exists(), "didn't create '{ENTRY_NAME}'");
+
+        temp_dir.close().expect("should have closed temp dir");
+    }
+
+    #[test]
+    fn sub_directories_create() {
+        const ENTRY_NAME: &str = "test_directory";
+
+        let temp_dir = TempDir::new(module_path!()).expect("couldn't create temp dir");
+
+        let path = temp_dir.path().join(ENTRY_NAME);
+        assert!(!path.exists(), "test is invalid, '{ENTRY_NAME}' already exists");
+
+        let entry: Directory = ('a'..'d')
+            .map(String::from)
+            .map(|c| (OsString::from(c), Box::new(Directory::new()) as Box<dyn Entry>))
+            .collect();
+        entry.create(&path).unwrap_or_else(|_| panic!("couldn't create '{ENTRY_NAME}'"));
+        assert!(path.exists(), "didn't create '{ENTRY_NAME}'");
+
+        for (name, _entry) in entry {
+            assert!(&path.join(&name).exists(), "didn't create '{ENTRY_NAME}/{name:?}'");
+        }
+
+        temp_dir.close().expect("should have closed temp dir");
+    }
+
+    #[test]
+    fn sub_files_create() {
+        const ENTRY_NAME: &str = "test_directory";
+
+        let temp_dir = TempDir::new(module_path!()).expect("couldn't create temp dir");
+
+        let path = temp_dir.path().join(ENTRY_NAME);
+        assert!(!path.exists(), "test is invalid, '{ENTRY_NAME}' already exists");
+
+        let entry: Directory = ('a'..'d')
+            .map(|c| (OsString::from(c.clone().to_string()), Box::new(CharFile::from(c.clone())) as Box<dyn Entry>))
+            .collect();
+        entry.create(&path).unwrap_or_else(|_| panic!("couldn't create '{ENTRY_NAME}'"));
+        assert!(path.exists(), "didn't create '{ENTRY_NAME}'");
+
+        for (name, _entry) in entry {
+            let local_path = &path.join(&name);
+            assert!(local_path.exists(), "didn't create '{ENTRY_NAME}/{name:?}'");
+            let read_file_contents = fs::read_to_string(local_path)
+                .expect("should have been able to read the file");
+            assert_eq!(*read_file_contents, *name, "'{ENTRY_NAME}/{name:?}' does not contain the correct contents");
+        }
+
+        temp_dir.close().expect("should have closed temp dir");
     }
 }
