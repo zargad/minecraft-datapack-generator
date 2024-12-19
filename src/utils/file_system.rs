@@ -37,7 +37,7 @@ impl Entry for Directory<'_> {
 mod tests {
     pub use super::*;
 
-    use std::fmt;
+    
 
     use tempdir::TempDir;
 
@@ -51,7 +51,7 @@ mod tests {
         assert!(!path.exists(), "test is invalid, '{entry_name}' already exists");
 
         let entry = Directory::new();
-        entry.create(&path).expect(&format!("couldn't create '{entry_name}'"));
+        entry.create(&path).unwrap_or_else(|_| panic!("couldn't create '{entry_name}'"));
         assert!(path.exists(), "didn't create '{entry_name}'");
 
         temp_dir.close().expect("couldn't close temp dir");
@@ -70,7 +70,7 @@ mod tests {
 
         const file_contents: &str = "Hello World!";
         let entry = StringFile::from(file_contents);
-        entry.create(&path).expect(&format!("Should have created '{entry_name}'"));
+        entry.create(&path).unwrap_or_else(|_| panic!("Should have created '{entry_name}'"));
         assert!(path.exists(), "'{entry_name}' does not exists");
 
         let read_file_contents = fs::read_to_string(path)
